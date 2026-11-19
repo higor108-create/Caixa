@@ -3,19 +3,20 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Caixa da Empresa</title>
 <style>
-body{background:#101827;color:white;font-family:Arial;padding:18px;margin:0}
+*{box-sizing:border-box}
+body{background:#101827;color:white;font-family:Arial;padding:16px;margin:0}
 main{max-width:550px;margin:auto}
-.card{background:#1e293b;padding:18px;border-radius:14px;margin:15px 0}
+.card{background:#1e293b;padding:17px;border-radius:14px;margin:14px 0}
 h1{font-size:25px}
-.balance{font-size:34px;font-weight:bold}
-input,select,button{box-sizing:border-box;width:100%;padding:13px;margin:7px 0;border-radius:8px;border:1px solid #475569;background:#0f172a;color:white;font-size:16px}
-button{background:#2563eb;border:0;font-weight:bold}
-.green{color:#4ade80}.red{color:#fb7185}
-.item{padding:12px 0;border-bottom:1px solid #475569}
 small{color:#94a3b8}
+.balance{font-size:32px;font-weight:bold;margin:10px 0}
+.green{color:#4ade80}.red{color:#fb7185}
+input,select,button{width:100%;padding:13px;margin:7px 0;border-radius:8px;border:1px solid #475569;background:#0f172a;color:white;font-size:16px}
+button{background:#2563eb;border:0;font-weight:bold}
+.item{padding:12px 0;border-bottom:1px solid #475569}
 </style>
 </head>
 <body>
@@ -24,10 +25,19 @@ small{color:#94a3b8}
 <small>Controle financeiro compartilhado</small>
 
 <div class="card">
-<small>SALDO ATUAL</small>
-<div class="balance" id="balance">R$ 0,00</div>
+<small>SALDO TOTAL DA EMPRESA</small>
+<div class="balance" id="total">R$ 0,00</div>
+</div>
+
+<div class="card">
+<h3>Resumo mensal</h3>
+<select id="month"></select>
+<p>Saldo inicial: <b id="opening">R$ 0,00</b></p>
 <p>Entradas: <b class="green" id="income">R$ 0,00</b></p>
 <p>Saídas: <b class="red" id="expense">R$ 0,00</b></p>
+<hr>
+<p>Saldo final do mês:</p>
+<div class="balance" id="closing">R$ 0,00</div>
 </div>
 
 <div class="card">
@@ -51,7 +61,7 @@ small{color:#94a3b8}
 </div>
 
 <div class="card">
-<h3>Histórico</h3>
+<h3>Histórico do mês</h3>
 <button id="export">Exportar CSV</button>
 <div id="history">Carregando...</div>
 </div>
@@ -60,7 +70,7 @@ small{color:#94a3b8}
 <script type="module">
 import {initializeApp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {getAuth,signInAnonymously} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import {getFirestore,collection,addDoc,onSnapshot,query,orderBy,serverTimestamp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import {getFirestore,collection,addDoc,onSnapshot,serverTimestamp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 const firebaseConfig={
 apiKey:"AIzaSyBywbCelAbT6r4TmR7LjSZNa_8PtbykYH0",
@@ -75,53 +85,80 @@ const app=initializeApp(firebaseConfig);
 const auth=getAuth(app);
 const db=getFirestore(app);
 const money=n=>Number(n||0).toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
+const monthKey=d=>d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");
+const monthName=k=>{
+const [y,m]=k.split("-").map(Number);
+return new Date(y,m-1,1).toLocaleDateString("pt-BR",{month:"long",year:"numeric"});
+};
 let movements=[];
+let selectedMonth=monthKey(new Date());
 
 const message=document.getElementById("message");
-const save=document.getElementById("save");
+const monthSelect=document.getElementById("month");
+const safe=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
 try{
 await signInAnonymously(auth);
-const q=query(collection(db,"movements"),orderBy("createdAt","desc"));
-onSnapshot(q,snapshot=>{
+onSnapshot(collection(db,"movements"),snapshot=>{
 movements=snapshot.docs.map(d=>({id:d.id,...d.data()}));
-render();
-},error=>message.textContent="Erro: "+error.message);
+movements.sort((a,b)=>(b.createdAt?.toMillis?.()||0)-(a.createdAt?.toMillis?.()||0));
+update();
+},error=>message.textContent="Erro ao carregar: "+error.message);
 }catch(e){
-message.textContent="Falha na conexão: "+e.message;
+message.textContent="Erro de conexão: "+e.message;
 }
 
-function render(){
-const entries=movements.filter(m=>m.type==="income").reduce((s,m)=>s+Number(m.amount),0);
-const exits=movements.filter(m=>m.type==="expense").reduce((s,m)=>s+Number(m.amount),0);
-document.getElementById("balance").textContent=money(entries-exits);
-document.getElementById("income").textContent=money(entries);
-document.getElementById("expense").textContent=money(exits);
+function update(){
+const dated=movements.filter(m=>m.createdAt?.toDate);
+const months=[...new Set([monthKey(new Date()),...dated.map(m=>monthKey(m.createdAt.toDate()))])].sort().reverse();
 
-const safe=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+if(!months.includes(selectedMonth)) selectedMonth=monthKey(new Date());
 
-document.getElementById("history").innerHTML=movements.length?movements.map(m=>`
+monthSelect.innerHTML=months.map(k=>`<option value="${k}">${monthName(k)}</option>`).join("");
+monthSelect.value=selectedMonth;
+
+const current=dated.filter(m=>monthKey(m.createdAt.toDate())===selectedMonth);
+const before=dated.filter(m=>monthKey(m.createdAt.toDate())<selectedMonth);
+
+const net=m=>m.type==="income"?Number(m.amount):-Number(m.amount);
+const total=dated.reduce((s,m)=>s+net(m),0);
+const opening=before.reduce((s,m)=>s+net(m),0);
+const income=current.filter(m=>m.type==="income").reduce((s,m)=>s+Number(m.amount),0);
+const expense=current.filter(m=>m.type==="expense").reduce((s,m)=>s+Number(m.amount),0);
+
+document.getElementById("total").textContent=money(total);
+document.getElementById("opening").textContent=money(opening);
+document.getElementById("income").textContent=money(income);
+document.getElementById("expense").textContent=money(expense);
+document.getElementById("closing").textContent=money(opening+income-expense);
+
+document.getElementById("history").innerHTML=current.length?current.map(m=>`
 <div class="item">
 <b class="${m.type==="income"?"green":"red"}">${m.type==="income"?"+":"-"} ${money(m.amount)}</b>
 <div>${safe(m.description)}</div>
 <small>${safe(m.category)} • ${safe(m.person)}</small><br>
-<small>${m.createdAt?.toDate?.().toLocaleString("pt-BR")||"Aguardando data"}</small>
-</div>`).join(""):"Nenhuma movimentação ainda.";
+<small>${m.createdAt.toDate().toLocaleString("pt-BR")}</small>
+</div>`).join(""):"Nenhuma movimentação neste mês.";
 }
 
-save.onclick=async()=>{
+monthSelect.addEventListener("change",()=>{
+selectedMonth=monthSelect.value;
+update();
+});
+
+document.getElementById("save").onclick=async()=>{
 const amount=Number(document.getElementById("amount").value);
 const description=document.getElementById("description").value.trim();
 if(!Number.isFinite(amount)||amount<=0||!description){
-message.textContent="Informe um valor e uma descrição.";
+message.textContent="Informe um valor válido e uma descrição.";
 return;
 }
+const save=document.getElementById("save");
 save.disabled=true;
 try{
 await addDoc(collection(db,"movements"),{
 type:document.getElementById("type").value,
-amount,
-description,
+amount,description,
 category:document.getElementById("category").value,
 person:document.getElementById("person").value,
 createdAt:serverTimestamp()
@@ -129,24 +166,25 @@ createdAt:serverTimestamp()
 document.getElementById("amount").value="";
 document.getElementById("description").value="";
 message.textContent="Movimentação registrada!";
-}catch(e){message.textContent="Erro ao salvar: "+e.message;}
+}catch(e){message.textContent="Erro: "+e.message;}
 finally{save.disabled=false;}
 };
 
 document.getElementById("export").onclick=()=>{
 const rows=[["Tipo","Valor","Descrição","Categoria","Responsável","Data"]];
-movements.forEach(m=>rows.push([
+movements.filter(m=>m.createdAt?.toDate&&monthKey(m.createdAt.toDate())===selectedMonth).forEach(m=>rows.push([
 m.type==="income"?"Entrada":"Saída",m.amount,m.description,m.category,m.person,
-m.createdAt?.toDate?.().toLocaleString("pt-BR")||""
+m.createdAt.toDate().toLocaleString("pt-BR")
 ]));
 const csv=rows.map(r=>r.map(v=>'"'+String(v??"").replace(/"/g,'""')+'"').join(";")).join("\n");
 const blob=new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8"});
 const url=URL.createObjectURL(blob);
 const a=document.createElement("a");
-a.href=url;a.download="caixa-da-empresa.csv";a.click();
+a.href=url;a.download="caixa-"+selectedMonth+".csv";a.click();
 URL.revokeObjectURL(url);
 };
 </script>
 </body>
 </html>
+
 
