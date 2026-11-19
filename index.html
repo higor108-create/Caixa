@@ -1,1 +1,152 @@
 
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Caixa da Empresa</title>
+<style>
+body{background:#101827;color:white;font-family:Arial;padding:18px;margin:0}
+main{max-width:550px;margin:auto}
+.card{background:#1e293b;padding:18px;border-radius:14px;margin:15px 0}
+h1{font-size:25px}
+.balance{font-size:34px;font-weight:bold}
+input,select,button{box-sizing:border-box;width:100%;padding:13px;margin:7px 0;border-radius:8px;border:1px solid #475569;background:#0f172a;color:white;font-size:16px}
+button{background:#2563eb;border:0;font-weight:bold}
+.green{color:#4ade80}.red{color:#fb7185}
+.item{padding:12px 0;border-bottom:1px solid #475569}
+small{color:#94a3b8}
+</style>
+</head>
+<body>
+<main>
+<h1>Caixa da Empresa</h1>
+<small>Controle financeiro compartilhado</small>
+
+<div class="card">
+<small>SALDO ATUAL</small>
+<div class="balance" id="balance">R$ 0,00</div>
+<p>Entradas: <b class="green" id="income">R$ 0,00</b></p>
+<p>Saídas: <b class="red" id="expense">R$ 0,00</b></p>
+</div>
+
+<div class="card">
+<h3>Nova movimentação</h3>
+<select id="type">
+<option value="income">Entrada</option>
+<option value="expense">Saída</option>
+</select>
+<input id="amount" type="number" min="0.01" step="0.01" placeholder="Valor em reais">
+<input id="description" maxlength="120" placeholder="Descrição">
+<select id="category">
+<option>Vendas</option><option>Serviços</option>
+<option>Materiais</option><option>Contas</option>
+<option>Salários</option><option>Outros</option>
+</select>
+<select id="person">
+<option>Você</option><option>Seu pai</option><option>Sua mãe</option>
+</select>
+<button id="save">Registrar movimentação</button>
+<p id="message"></p>
+</div>
+
+<div class="card">
+<h3>Histórico</h3>
+<button id="export">Exportar CSV</button>
+<div id="history">Carregando...</div>
+</div>
+</main>
+
+<script type="module">
+import {initializeApp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import {getAuth,signInAnonymously} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import {getFirestore,collection,addDoc,onSnapshot,query,orderBy,serverTimestamp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+const firebaseConfig={
+apiKey:"AIzaSyBywbCelAbT6r4TmR7LjSZNa_8PtbykYH0",
+authDomain:"caixa-empresa-94678.firebaseapp.com",
+projectId:"caixa-empresa-94678",
+storageBucket:"caixa-empresa-94678.firebasestorage.app",
+messagingSenderId:"781099203273",
+appId:"1:781099203273:web:1320d429a1e25a4943eb18"
+};
+
+const app=initializeApp(firebaseConfig);
+const auth=getAuth(app);
+const db=getFirestore(app);
+const money=n=>Number(n||0).toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
+let movements=[];
+
+const message=document.getElementById("message");
+const save=document.getElementById("save");
+
+try{
+await signInAnonymously(auth);
+const q=query(collection(db,"movements"),orderBy("createdAt","desc"));
+onSnapshot(q,snapshot=>{
+movements=snapshot.docs.map(d=>({id:d.id,...d.data()}));
+render();
+},error=>message.textContent="Erro: "+error.message);
+}catch(e){
+message.textContent="Falha na conexão: "+e.message;
+}
+
+function render(){
+const entries=movements.filter(m=>m.type==="income").reduce((s,m)=>s+Number(m.amount),0);
+const exits=movements.filter(m=>m.type==="expense").reduce((s,m)=>s+Number(m.amount),0);
+document.getElementById("balance").textContent=money(entries-exits);
+document.getElementById("income").textContent=money(entries);
+document.getElementById("expense").textContent=money(exits);
+
+const safe=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+document.getElementById("history").innerHTML=movements.length?movements.map(m=>`
+<div class="item">
+<b class="${m.type==="income"?"green":"red"}">${m.type==="income"?"+":"-"} ${money(m.amount)}</b>
+<div>${safe(m.description)}</div>
+<small>${safe(m.category)} • ${safe(m.person)}</small><br>
+<small>${m.createdAt?.toDate?.().toLocaleString("pt-BR")||"Aguardando data"}</small>
+</div>`).join(""):"Nenhuma movimentação ainda.";
+}
+
+save.onclick=async()=>{
+const amount=Number(document.getElementById("amount").value);
+const description=document.getElementById("description").value.trim();
+if(!Number.isFinite(amount)||amount<=0||!description){
+message.textContent="Informe um valor e uma descrição.";
+return;
+}
+save.disabled=true;
+try{
+await addDoc(collection(db,"movements"),{
+type:document.getElementById("type").value,
+amount,
+description,
+category:document.getElementById("category").value,
+person:document.getElementById("person").value,
+createdAt:serverTimestamp()
+});
+document.getElementById("amount").value="";
+document.getElementById("description").value="";
+message.textContent="Movimentação registrada!";
+}catch(e){message.textContent="Erro ao salvar: "+e.message;}
+finally{save.disabled=false;}
+};
+
+document.getElementById("export").onclick=()=>{
+const rows=[["Tipo","Valor","Descrição","Categoria","Responsável","Data"]];
+movements.forEach(m=>rows.push([
+m.type==="income"?"Entrada":"Saída",m.amount,m.description,m.category,m.person,
+m.createdAt?.toDate?.().toLocaleString("pt-BR")||""
+]));
+const csv=rows.map(r=>r.map(v=>'"'+String(v??"").replace(/"/g,'""')+'"').join(";")).join("\n");
+const blob=new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8"});
+const url=URL.createObjectURL(blob);
+const a=document.createElement("a");
+a.href=url;a.download="caixa-da-empresa.csv";a.click();
+URL.revokeObjectURL(url);
+};
+</script>
+</body>
+</html>
+
